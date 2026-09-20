@@ -1,0 +1,91 @@
+{
+  "schema": "q200v2.completed-adjudication.v1",
+  "status": "ADJUDICATED_COMPLETE",
+  "scope": "Supplemental all-row outcome adjudication; not a replacement for the frozen kit transport/closure result.",
+  "policy": "Retain existing valid grades; count the exhausted-budget response that supplies no substantive final answer as failed. No regeneration or cap increase.",
+  "run_id": "q200v2-native-container-20260917",
+  "run_identity_sha256": "7fd44c0cff81aee0df75e06ebdd0ade2d63c5903ce534a4cd4f0a2ffe9b0b10d",
+  "dataset_sha256": "66a75701cbeea69f212e1c8be92aab9efaf3fa4d7af3c6911c8f7864a17d8d14",
+  "source_summary": "metrics/q200v2/summary.json",
+  "source_summary_sha256": "7313365e2af0d847838a684aa6f6cd89185bd9847596a7cd4cb5c5e215e2e3db",
+  "raw_rows_sha256": "380958ca37b72fa6a8061fd8cdc4059ea23fc28b71f3a0613a8eeecb7a202f9d",
+  "execution_complete": true,
+  "grading_complete": true,
+  "total_count": 180,
+  "graded_count": 180,
+  "correct_count": 172,
+  "failed_count": 8,
+  "ungraded_count": 0,
+  "families": {
+    "gsm8k": {
+      "n": 80,
+      "correct": 78,
+      "failed": 2,
+      "graded": 80,
+      "pending": 0,
+      "accuracy_pct": 97.5,
+      "transported": 80
+    },
+    "hard_reasoning": {
+      "n": 20,
+      "correct": 20,
+      "failed": 0,
+      "graded": 20,
+      "pending": 0,
+      "accuracy_pct": 100.0,
+      "transported": 20
+    },
+    "humaneval": {
+      "n": 40,
+      "correct": 40,
+      "failed": 0,
+      "graded": 40,
+      "pending": 0,
+      "accuracy_pct": 100.0,
+      "transported": 40
+    },
+    "ifeval": {
+      "n": 40,
+      "correct": 34,
+      "failed": 6,
+      "graded": 40,
+      "pending": 0,
+      "accuracy_pct": 85.0,
+      "transported": 39
+    }
+  },
+  "official_kit": {
+    "status": "INCOMPLETE",
+    "correct_count": 172,
+    "incorrect_count": 7,
+    "ungraded_count": 1,
+    "transport_complete": false,
+    "transport_count": 179
+  },
+  "adjudications": [
+    {
+      "id": "ifeval-023",
+      "family": "ifeval",
+      "passed": false,
+      "verdict": "FAILED_NO_SUBSTANTIVE_ANSWER_AT_TOKEN_CAP",
+      "reviewer": "Hermes",
+      "content": ".",
+      "content_sha256": "cdb4ee2aea69cc6a83331bbe96dc2caa9a299d21329efb0336fc02a82e1839a8",
+      "response_sha256": "362999abf8ae068b7a184465c61877a5c613ea1e87970d81493915a9bd687d9a",
+      "finish_reason": "length",
+      "completion_tokens": 8192,
+      "request_max_tokens": 8192,
+      "original_content_grader": {
+        "checks": [
+          {
+            "instruction": "keywords:letter_frequency",
+            "passed": true
+          }
+        ],
+        "passed": true,
+        "status": "scored"
+      },
+      "rationale": "The request requires a logic quiz about a chesterfield with at most one letter t. The saved final content is a single period, not a quiz; the automatic letter-frequency check passes vacuously. Generation exhausted the fixed8192-token budget. This is a failed task outcome; no answer is reconstructed from reasoning text."
+    }
+  ]
+}

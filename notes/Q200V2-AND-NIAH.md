@@ -15,6 +15,10 @@ Raw rows stay under `/home/am/r0b0bench-q200v2/runs/q200v2-native-container-2026
 
 ## Q200v2 text-180
 
+Completed outcome adjudication: **172 correct / 8 failed / 0 pending** across all 180 rows. The capped `ifeval-023` is counted as failed because a single period is not the requested logic quiz. With that failure included, IFEval is **34/40 (85.0%)**. See [the completed review](Q200V2-ADJUDICATION.md) and `metrics/q200v2/adjudicated.json`. No responses were regenerated and no cap was increased.
+
+The table below preserves the original frozen-kit accounting. Its INCOMPLETE status describes the transport/closure contract, not pending outcome review.
+
 | family | n | transported | graded | correct | accuracy |
 | --- | --- | --- | --- | --- | --- |
 | gsm8k | 80 | 80 | 80 | 78 | 97.5 % |

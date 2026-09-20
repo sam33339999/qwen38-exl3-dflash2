@@ -4,7 +4,8 @@ Sanitized summaries. Raw rows stay in `/home/am/r0b0bench-q200v2/runs/q200v2-nat
 
 | file | what |
 | --- | --- |
-| `q200v2/summary.json` | Kit-produced run summary (frozen Q200v2 text-180, dataset `66a75701…`). |
+| `q200v2/summary.json` | Original kit-produced summary, unchanged (transport/closure INCOMPLETE). |
+| `q200v2/adjudicated.json` | Completed all-row review: 172 correct / 8 failed / 0 pending; capped/no-answer case counted failed with response-hash evidence. |
 | `q200v2/throughput-digest.json` | E2E throughput per PROCEDURES §4 over n=180. |
 | `q200v2/telemetry.tsv` + `telemetry-digest.json` | 2 s host telemetry; digest is load-only (util > 0). |
 | `q200v2/manual-evidence.json` | Independent review for 20 hard_reasoning rows. |
