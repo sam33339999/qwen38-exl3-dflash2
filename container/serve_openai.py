@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import select
 import socket
 import sys
@@ -139,6 +140,99 @@ def stop_label(eos_reason, in_think, think_closed):
 
 class ClientGone(Exception):
     pass
+
+
+_TOOL_BLOCK = re.compile(
+    r"<tool_call>\s*<function=([^>\n]+)>\s*(.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_TOOL_PARAM = re.compile(
+    r"<parameter=([^>\n]+)>\s*(.*?)\s*</parameter>",
+    re.DOTALL,
+)
+
+
+def parse_qwen_tool_calls(text):
+    """Turn Qwen's <tool_call> XML into OpenAI tool_calls.
+
+    Returns (calls, leftover_text). Incomplete XML is left in the text.
+    """
+    if not text or "<tool_call>" not in text:
+        return [], text or ""
+    calls = []
+    for match in _TOOL_BLOCK.finditer(text):
+        args = {}
+        for param in _TOOL_PARAM.finditer(match.group(2)):
+            raw = param.group(2).strip()
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                value = raw
+            args[param.group(1).strip()] = value
+        calls.append({
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {
+                "name": match.group(1).strip(),
+                "arguments": json.dumps(args, ensure_ascii = False),
+            },
+        })
+    if not calls:
+        return [], text
+    leftover = _TOOL_BLOCK.sub("", text).strip()
+    return calls, leftover
+
+
+def normalize_messages(messages):
+    """Qwen's chat template iterates tool arguments with `|items`.
+
+    OpenAI clients send `function.arguments` as a JSON string. Jinja then
+    raises 'Can only get item pairs from a mapping' and the request 500s.
+    """
+    normalized = []
+    for message in messages or []:
+        message = dict(message)
+        calls = message.get("tool_calls")
+        if calls:
+            fixed_calls = []
+            for call in calls:
+                call = dict(call)
+                function = call.get("function")
+                if isinstance(function, dict):
+                    function = dict(function)
+                    function["arguments"] = _arguments_mapping(function.get("arguments"))
+                    call["function"] = function
+                elif "arguments" in call:
+                    call["arguments"] = _arguments_mapping(call.get("arguments"))
+                fixed_calls.append(call)
+            message["tool_calls"] = fixed_calls
+        normalized.append(message)
+    return normalized
+
+
+def _arguments_mapping(arguments):
+    if arguments is None or arguments == "":
+        return {}
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {"arguments": arguments}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
+    return {"value": arguments}
+
+
+def request_tools(body):
+    if body.get("tool_choice") == "none":
+        return None
+    tools = body.get("tools")
+    if not tools:
+        return None
+    return tools
 
 
 class SS_ThinkExit(SS_Base):
@@ -497,9 +591,12 @@ class Server:
             steps.append(SS_Sample())
         return CustomSampler(steps)
 
-    def render_chat(self, messages, template_kwargs):
+    def render_chat(self, messages, template_kwargs, tools = None):
+        kwargs = dict(template_kwargs or {})
+        if tools:
+            kwargs["tools"] = tools
         ids = self.tokenizer.hf_chat_template(
-            messages, add_generation_prompt = True, **(template_kwargs or {})
+            normalize_messages(messages), add_generation_prompt = True, **kwargs
         )
         return ids
 
@@ -610,14 +707,15 @@ class Handler(BaseHTTPRequestHandler):
     def _render(self, body):
         messages = body.get("messages") or []
         kwargs = body.get("chat_template_kwargs") or {}
-        ids = SERVE.render_chat(messages, kwargs)
+        ids = SERVE.render_chat(messages, kwargs, request_tools(body))
         self._send(200, {"token_ids": ids[0].tolist() if ids.dim() == 2 else ids.tolist()})
 
     def _chat(self, body):
         model_name = body.get("model") or SERVE.model_name
         messages = body.get("messages") or []
         template_kwargs = body.get("chat_template_kwargs") or {}
-        ids = SERVE.render_chat(messages, template_kwargs)
+        tools = request_tools(body)
+        ids = SERVE.render_chat(messages, template_kwargs, tools)
         max_tokens = int(body.get("max_tokens") or SERVE.default_max_tokens)
         temperature = float(body.get("temperature") or 0)
         in_think = template_kwargs.get("enable_thinking", True) is not False
@@ -635,6 +733,11 @@ class Handler(BaseHTTPRequestHandler):
             content = content.lstrip("\n ")
             if not content.strip():
                 content = text
+        tool_calls, content = parse_qwen_tool_calls(content)
+        message = {"role": "assistant", "content": content or None, "reasoning_content": reasoning_content}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        finish = "tool_calls" if tool_calls else SERVE.finish_reason(r)
         self._send(200, {
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
             "object": "chat.completion",
@@ -642,8 +745,8 @@ class Handler(BaseHTTPRequestHandler):
             "model": model_name,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": content, "reasoning_content": reasoning_content},
-                "finish_reason": SERVE.finish_reason(r),
+                "message": message,
+                "finish_reason": finish,
             }],
             "usage": {
                 "prompt_tokens": r["prompt_tokens"],
@@ -744,7 +847,8 @@ class Handler(BaseHTTPRequestHandler):
         model_name = body.get("model") or SERVE.model_name
         messages = body.get("messages") or []
         template_kwargs = body.get("chat_template_kwargs") or {}
-        ids = SERVE.render_chat(messages, template_kwargs)
+        tools = request_tools(body)
+        ids = SERVE.render_chat(messages, template_kwargs, tools)
         max_tokens = int(body.get("max_tokens") or SERVE.default_max_tokens)
         temperature = float(body.get("temperature") or 0)
         in_think = template_kwargs.get("enable_thinking", True) is not False
@@ -758,16 +862,41 @@ class Handler(BaseHTTPRequestHandler):
             self._begin_sse()
             self._sse(self._chat_chunk(cid, created, model_name, {"role": "assistant"}, None))
             splitter = ThinkStream(in_think)
+            held_content = []
             for piece in self._iter_stream(holder):
                 for kind, text in splitter.feed(piece):
+                    if kind == "content" and tools:
+                        held_content.append(text)
+                        continue
                     delta = {"reasoning_content": text} if kind == "reasoning" else {"content": text}
                     self._sse(self._chat_chunk(cid, created, model_name, delta, None))
             result = holder["result"] or {}
             for kind, text in splitter.finish():
+                if kind == "content" and tools:
+                    held_content.append(text)
+                    continue
                 delta = {"reasoning_content": text} if kind == "reasoning" else {"content": text}
                 self._sse(self._chat_chunk(cid, created, model_name, delta, None))
+            finish = SERVE.finish_reason(result)
+            if tools:
+                calls, cleaned = parse_qwen_tool_calls("".join(held_content))
+                if calls:
+                    if cleaned:
+                        self._sse(self._chat_chunk(cid, created, model_name, {"content": cleaned}, None))
+                    for index, call in enumerate(calls):
+                        self._sse(self._chat_chunk(cid, created, model_name, {
+                            "tool_calls": [{
+                                "index": index,
+                                "id": call["id"],
+                                "type": "function",
+                                "function": call["function"],
+                            }],
+                        }, None))
+                    finish = "tool_calls"
+                elif held_content:
+                    self._sse(self._chat_chunk(cid, created, model_name, {"content": "".join(held_content)}, None))
             self._sse(self._chat_chunk(
-                cid, created, model_name, {}, SERVE.finish_reason(result), self._usage(result),
+                cid, created, model_name, {}, finish, self._usage(result),
                 result.get("stats"),
             ))
             self._sse(None)
