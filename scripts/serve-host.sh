@@ -38,20 +38,20 @@ usage() {
   CQ=3                      KV cache 量化 bit
   MAX_TOKENS=32768          客戶端沒帶 max_tokens 時，聊天最多新生成的 token。
                             思考和回答都算在裡面。prompt + 這個值要放得進 CTX。
-  DRY_MULTIPLIER=0.8        DRY 重複片段懲罰。0 關掉。
-                            要接出剛才出現過的片段時，那些 token 的機率會被壓低，
-                            生成繼續，不會因為打轉把這次請求結束。
+  DRY_MULTIPLIER=0.2        DRY 重複片段懲罰。0 關掉。
+                            只輕輕壓「整段照抄」。太高會把重複的程式碼呼叫寫壞。
   DRY_BASE=1.75             重複越長，懲罰上升越快
-  DRY_ALLOWED_LENGTH=2      短於等於這個長度的重複不罰
+  DRY_ALLOWED_LENGTH=6      短於等於這個長度的重複不罰，方法呼叫列表可以照常寫
   DRY_RANGE=4096            往回看幾個 token。0 表示整段上下文
   REP_PENALTY=1.0           單字重複懲罰。1.0 是關掉，大於 1 才罰
-  FREQ_PENALTY=0.3          最近 FREQ_RANGE 個 token 裡，出現越多次的字再被選中就越不利。
-                            用來壓「換個詞再列一條」這種句型。0 關掉。
+  FREQ_PENALTY=0            最近 FREQ_RANGE 個 token 裡，出現越多次的字再被選中就越不利。
+                            預設 0。開太大時，重複的 `$this->app->...` 會被拆掉。
   FREQ_RANGE=512
   THINK_BUDGET=4096         思考超過這麼多個新 token 後，</think> 的分數開始上升，
                             模型會轉去寫答案。請求不會被掐掉。0 關掉。
   THINK_RAMP=1536           從開始加分到加滿要再多少 token
   THINK_BIAS=16             </think> 最多加多少 logit
+  THINK_FREQ=0.2            只在思考還沒結束時，懲罰最近用過的字。答案階段不加。
   LOOP_WINDOW=0             大於 0 時，token 完全重複才會硬停生成。
                             預設 0，打轉只靠懲罰和 think budget，不中斷請求
   LOOP_REPS=3               搭配 LOOP_WINDOW 的重複次數
@@ -88,16 +88,17 @@ CQ="${CQ:-3}"
 MAX_TOKENS="${MAX_TOKENS:-32768}"
 # DRY down-weights tokens that would extend a repeated phrase. It does not end the request.
 # rep penalty 1.0 is off. LOOP_WINDOW 0 means a detected loop does not abort generation.
-DRY_MULTIPLIER="${DRY_MULTIPLIER:-0.8}"
+DRY_MULTIPLIER="${DRY_MULTIPLIER:-0.2}"
 DRY_BASE="${DRY_BASE:-1.75}"
-DRY_ALLOWED_LENGTH="${DRY_ALLOWED_LENGTH:-2}"
+DRY_ALLOWED_LENGTH="${DRY_ALLOWED_LENGTH:-6}"
 DRY_RANGE="${DRY_RANGE:-4096}"
 REP_PENALTY="${REP_PENALTY:-1.0}"
-FREQ_PENALTY="${FREQ_PENALTY:-0.3}"
+FREQ_PENALTY="${FREQ_PENALTY:-0}"
 FREQ_RANGE="${FREQ_RANGE:-512}"
 THINK_BUDGET="${THINK_BUDGET:-4096}"
 THINK_RAMP="${THINK_RAMP:-1536}"
 THINK_BIAS="${THINK_BIAS:-16}"
+THINK_FREQ="${THINK_FREQ:-0.2}"
 LOOP_WINDOW="${LOOP_WINDOW:-0}"
 LOOP_REPS="${LOOP_REPS:-3}"
 # cache_tokens is the KV allocation; the server default (270336) covers 262144
@@ -155,6 +156,7 @@ exec "$PYTHON" "$ROOT/scripts/serve_openai.py" \
   --think-budget "$THINK_BUDGET" \
   --think-ramp "$THINK_RAMP" \
   --think-bias "$THINK_BIAS" \
+  --think-freq "$THINK_FREQ" \
   --dry-multiplier "$DRY_MULTIPLIER" \
   --dry-base "$DRY_BASE" \
   --dry-allowed-length "$DRY_ALLOWED_LENGTH" \

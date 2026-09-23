@@ -150,12 +150,14 @@ class SS_ThinkExit(SS_Base):
     rises linearly and the model can start the answer.
     """
 
-    def __init__(self, close_id, prompt_len, budget, ramp, max_bias):
+    def __init__(self, close_id, prompt_len, budget, ramp, max_bias, think_freq = 0.0, think_freq_window = 256):
         self.close_id = int(close_id)
         self.prompt_len = int(prompt_len)
         self.budget = int(budget)
         self.ramp = max(1, int(ramp))
         self.max_bias = float(max_bias)
+        self.think_freq = float(think_freq)
+        self.think_freq_window = max(1, int(think_freq_window))
 
     def reqs_past_ids(self):
         return True
@@ -175,6 +177,32 @@ class SS_ThinkExit(SS_Base):
             return 0.0
         return min(self.max_bias, over / self.ramp * self.max_bias)
 
+    def _open_generated(self, past_ids):
+        """Generated tokens while the think block is still open, else None."""
+        if past_ids is None or past_ids.numel() == 0 or self.think_freq <= 0:
+            return None
+        row = past_ids[0] if past_ids.dim() == 2 else past_ids
+        prompt_len = min(self.prompt_len, int(row.shape[0]))
+        if (row[:prompt_len] == self.close_id).any():
+            return None
+        generated = row[prompt_len:]
+        if generated.numel() == 0 or (generated == self.close_id).any():
+            return None
+        return generated
+
+    def _penalize_open_think(self, state):
+        # Only while thinking. Repeated words in the trace get cheaper to say again,
+        # so a checklist cannot keep rotating new quotes. The answer is untouched.
+        generated = self._open_generated(state.past_ids)
+        if generated is None or int(generated.shape[0]) < 16:
+            return
+        recent = generated[-self.think_freq_window:].to(torch.long)
+        counts = torch.bincount(recent, minlength = state.dim)
+        penalty = counts.to(state.logits.dtype) * self.think_freq
+        if 0 <= self.close_id < penalty.shape[0]:
+            penalty[self.close_id] = 0
+        state.logits[0] -= penalty[:state.logits.shape[-1]]
+
     def run(self, state):
         if state.state == SS.INIT:
             state.logits = state.in_logits.to(torch.float, copy = True)
@@ -184,6 +212,7 @@ class SS_ThinkExit(SS_Base):
         bias = self._bias(state.past_ids)
         if bias:
             state.logits[..., self.close_id] += bias
+        self._penalize_open_think(state)
 
 
 class Server:
@@ -205,6 +234,7 @@ class Server:
         self.think_budget = args.think_budget
         self.think_ramp = args.think_ramp
         self.think_bias = args.think_bias
+        self.think_freq = args.think_freq
 
         tcfg = Config.from_directory(args.target)
         dcfg = Config.from_directory(args.draft)
@@ -244,7 +274,7 @@ class Server:
             f"[serve] READY  context={self.max_model_len}  default_max_tokens={self.default_max_tokens}  "
             f"loop={('%dx%d' % self.loop_stop) if self.loop_stop else 'off'}  "
             f"dry={self.dry_multiplier} rep={self.rep_p} freq={self.freq_p}/{self.freq_range}  "
-            f"think_budget={self.think_budget}+{self.think_ramp}",
+            f"think_budget={self.think_budget}+{self.think_ramp} think_freq={self.think_freq}",
             flush=True,
         )
 
@@ -458,6 +488,7 @@ class Server:
                 pen.get("think_budget", self.think_budget),
                 pen.get("think_ramp", self.think_ramp),
                 pen.get("think_bias", self.think_bias),
+                think_freq = pen.get("think_freq", self.think_freq),
             ))
         if not temperature:
             steps.append(SS_Argmax())
@@ -848,17 +879,19 @@ def main():
     ap.add_argument("--loop-min-reps", type = int, default = 3)
     ap.add_argument("--rep-penalty", type = float, default = 1.0,
                     help = "transformers repetition penalty; 1.0 disables it")
-    ap.add_argument("--freq-penalty", type = float, default = 0.3,
-                    help = "penalize tokens already used in the recent window")
+    ap.add_argument("--freq-penalty", type = float, default = 0.0,
+                    help = "penalize tokens already used in the recent window; 0 leaves code lists intact")
     ap.add_argument("--freq-range", type = int, default = 512)
     ap.add_argument("--think-budget", type = int, default = 4096,
                     help = "generated tokens before </think> starts getting a logit bonus; 0 disables")
     ap.add_argument("--think-ramp", type = int, default = 1536)
     ap.add_argument("--think-bias", type = float, default = 16.0)
-    ap.add_argument("--dry-multiplier", type = float, default = 0.8,
+    ap.add_argument("--think-freq", type = float, default = 0.2,
+                    help = "frequency penalty applied only while the think block is open")
+    ap.add_argument("--dry-multiplier", type = float, default = 0.2,
                     help = "DRY sequence penalty; 0 disables it")
     ap.add_argument("--dry-base", type = float, default = 1.75)
-    ap.add_argument("--dry-allowed-length", type = int, default = 2)
+    ap.add_argument("--dry-allowed-length", type = int, default = 6)
     ap.add_argument("--dry-range", type = int, default = 4096,
                     help = "how many recent tokens DRY looks at; 0 means the whole context")
     args = ap.parse_args()
